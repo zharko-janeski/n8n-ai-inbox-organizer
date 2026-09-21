@@ -1,93 +1,188 @@
 📬 AI Inbox Organizer & Priority Alert
-demo
 
-An n8n workflow that reads every incoming email with an LLM, classifies it(urgent / newsletter / job-related / invoice / other), and acts on it:labels it, archives newsletters, auto-drafts replies, creates paymentreminders in Google Calendar, and pushes urgent alerts to Telegram.
+demo.gif
 
-Runs fully autonomous — and the classifier is a local LLM on my ownhardware: zero API cost, zero data leaves the network.
+An n8n automation that classifies incoming Gmail messages with an LLM and routes each email to an appropriate action.
+
+The workflow classifies emails into five categories:
+
+urgent · newsletter · job-related · invoice · other
+
+Based on the classification, it can apply Gmail labels, archive newsletters, create reply drafts, schedule payment reminders in Google Calendar, or send urgent notifications to Telegram.
+
+The primary classifier runs locally using Qwen 2.5 7B through LM Studio, with Gemini configured as a fallback model.
 
 Architecture
-┌─────────────────┐ ┌──────────────────────┐
-│ Server PC │ LAN │ Inference PC │
-│ n8n (npm) │───────▶│ LM Studio │
-│ the workflow │ │ Qwen 2.5 7B Instruct│
-└────────┬────────┘ └──────────┬───────────┘
-│ │ OpenAI-compatible API :1234
-▼ ▼
-Gmail / Calendar API Gemini (fallback model)
+                         ┌──────────────────────┐
+                         │      Inference PC     │
+                         │                      │
+                         │      LM Studio       │
+                         │   Qwen 2.5 7B        │
+                         └──────────▲───────────┘
+                                    │
+                         OpenAI-compatible API
+                                    │
+┌─────────────────┐                │
+│    Server PC    │                │
+│                 │                │
+│      n8n        │────────────────┘
+│    Workflow     │
+└────────┬────────┘
+         │
+         ├────────── Gmail
+         │
+         ├────────── Google Calendar
+         │
+         └────────── Telegram
 
+                  Gemini
+               (Fallback)
+Workflow
+Gmail Trigger
+      ↓
+Prepare Email
+      ↓
+Classify Email
+      ↓
+Parse AI Output
+      ↓
+Route by Category
+      ↓
+┌──────────┬─────────────┬────────────┬─────────────┬─────────┐
+│  Urgent  │  Newsletter │ Job-related│   Invoice   │  Other  │
+└──────────┴─────────────┴────────────┴─────────────┴─────────┘
+Email Routing
+Category	Action
+Urgent	Adds AI/Urgent label and sends a Telegram alert containing the AI summary and priority (1–5).
+Job-related	Adds AI/Jobs label and creates a reply draft. The reply is never sent automatically.
+Invoice	Adds AI/Invoices label and creates a Google Calendar payment reminder.
+Newsletter	Marks the email as read.
+Other	No action is performed.
+Local LLM
+lmstudio.png
+The primary classifier runs on a separate machine using Qwen 2.5 7B through LM Studio.
 
-Flow: **Gmail Trigger → Normalize (Code) → LLM Classify → Validate JSON (Code)
-→ Switch → 5 action branches**
+Model:       Qwen 2.5 7B Instruct
+Format:      GGUF Q4_K_S
+Size:        4.4 GB
+Interface:   OpenAI-compatible API
+Network:     Local LAN
+Endpoint:    :1234
 
-| Category | Actions |
-|---|---|
-| 🚨 urgent | label `AI/Urgent` + Telegram alert with AI summary & priority (1–5) |
-| 💼 job-related | label `AI/Jobs` + auto-drafted reply (saved as draft — never sent blindly) |
-| 🧾 invoice | label `AI/Invoices` + Google Calendar payment reminder |
-| 📰 newsletter | marked as read |
-| 🤷 other | explicit No-Op |
+The n8n server communicates with the inference machine over the local network.
 
-## Local inference
+Gemini is configured as the fallback model so the workflow can continue processing emails if the local inference server is unavailable.
 
-![LM Studio serving Qwen over LAN](screenshots/lmstudio.png)
+(canvas.png)
 
-*Qwen 2.5 7B (GGUF Q4_K_S, 4.4 GB) via LM Studio on a separate machine,
-served over the LAN through an OpenAI-compatible endpoint. Each log line is a
-real email classified locally — ~25 output tokens per classification.*
+Output Validation
 
-![Production run](screenshots/canvas.png)
+The LLM output is passed through a dedicated validation step before the workflow performs any actions.
 
-## Design decisions worth stealing
+The validation handles:
 
-- **Local-first AI** — primary model is Qwen on my own hardware. No tokens,
-  no bills, no emails leaving the network. Gemini sits on the **Fallback Model**
-  input: if the inference PC is down, the cloud catches the email instead of
-  the workflow dying.
-- **Never trust the model** — a dedicated validation node strips markdown
-  fences, regex-extracts JSON, whitelists categories, clamps priority to 1–5,
-  and degrades gracefully (`other`) on parse failure instead of crashing.
-- **Version-resilient parsing** — the normalizer handles 3 different Gmail
-  trigger output shapes (legacy `payload` format, new pre-parsed headers, demo
-  data). Survived an n8n update in production without dropping an email.
-- **Reversibility ladder** — actions are ranked by reversibility: labels,
-  mark-as-read, drafts. **The workflow can never delete an email**, because AI
-  classification *will* eventually misfire.
-- **Demo mode** — a manual trigger + sample-email node (disabled by default)
-  runs the full pipeline on fake data, no real inbox needed for testing.
+Markdown code fences
+JSON extraction
+Allowed category validation
+Priority validation and clamping to 1–5
+Invalid output fallback to other
 
-## Setup
+This keeps the routing logic independent from the model's raw response.
 
-<details>
-<summary>Full setup guide</summary>
+Gmail Input Normalization
 
-1. Import `workflow.json` into n8n
-2. Google Cloud project → enable **Gmail API** + **Google Calendar API** →
-   OAuth consent screen (add yourself as test user) → OAuth client (Web) →
-   paste Client ID/Secret into n8n (use n8n's redirect URL)
-3. Create Gmail labels `AI/Urgent`, `AI/Jobs`, `AI/Invoices`, select them in
-   the label nodes
-4. **Local LLM:** LM Studio → download `qwen2.5-7b-instruct` → Developer tab →
-   Start Server → enable *Serve on Local Network* → n8n credential:
-   Base URL `http://INFERENCE_PC_IP:1234/v1`, any text as API key,
-   **Responses API: OFF**
-5. **Fallback:** Google AI Studio API key → Gemini node (a *chat* model — not TTS!)
-6. **Telegram:** BotFather → create bot → token into n8n credential → message
-   the bot once → get chat ID from `api.telegram.org/bot<TOKEN>/getUpdates`
-7. Optional: enable the demo nodes (Manual Trigger + Sample Email) to test
-   without touching a real inbox
+The workflow normalizes Gmail data before classification.
+
+The normalization logic supports three Gmail trigger output formats:
+
+Legacy payload format
+Pre-parsed headers
+Demo/sample data
+
+This allows the same classification pipeline to work with different Gmail trigger output structures.
+
+Action Safety
+
+The workflow intentionally uses reversible actions.
+
+Labels
+   ↓
+Mark as read
+   ↓
+Create draft
+
+The workflow never deletes emails.
+
+For job-related emails, the AI only creates a Gmail draft. The message remains under manual control and is never sent automatically.
+
+Demo Mode
+
+The workflow includes a disabled-by-default demo path using:
+
+Manual Trigger
+      ↓
+Sample Email
+      ↓
+Full workflow
+
+This allows the complete classification and routing pipeline to be tested without using a real inbox.
+
+Setup
+<details> <summary><strong>Setup Guide</strong></summary>
+1. Import the workflow
+
+Import workflow.json into n8n.
+
+2. Google APIs
+
+Create a Google Cloud project and enable:
+
+Gmail API
+Google Calendar API
+
+Configure the OAuth consent screen, add yourself as a test user, create a Web OAuth client, and configure the credentials in n8n using n8n's redirect URL.
+
+3. Gmail Labels
+
+Create the following Gmail labels:
+
+AI/Urgent
+AI/Jobs
+AI/Invoices
+
+Select the corresponding labels in the workflow.
+
+4. Local LLM
+
+In LM Studio:
+
+Download qwen2.5-7b-instruct
+Open the Developer tab
+Start the server
+Enable Serve on Local Network
+
+Configure the n8n credential with:
+
+Base URL: http://INFERENCE_PC_IP:1234/v1
+API Key: any text
+Responses API: OFF
+5. Gemini Fallback
+
+Add a Google AI Studio API key to the Gemini chat model used as the fallback.
+
+6. Telegram
+
+Create a Telegram bot through BotFather, add the bot token to n8n, and send the bot a message.
+
+The chat ID can then be retrieved through the Telegram Bot API.
+
+7. Demo Mode
+
+Enable the Manual Trigger and Sample Email nodes to test the workflow without connecting it to a real inbox.
 
 </details>
+Built With
 
-## Roadmap
-- [ ] Accuracy eval: 50 labeled test emails → publish % here
-- [ ] Parse invoice due dates → schedule the reminder on the real deadline
-- [ ] Gmail push (watch) instead of 60s polling
-- [ ] Weekly newsletter digest to Telegram
+n8n · Gmail API · Google Calendar · Telegram · LM Studio · Qwen 2.5 7B · Gemini
 
-## Skills demonstrated
-LLM structured-output prompting · output validation & graceful degradation ·
-primary/fallback model architecture · OAuth 2.0 (Gmail, Calendar) · self-hosted
-inference over LAN (LM Studio) · n8n workflow design · production debugging
-
----
-*Built with [n8n](https://n8n.io) · Classifier: Qwen 2.5 7B (local) with Gemini fallback*
+Primary classifier: Qwen 2.5 7B running locally via LM Studio · Fallback: Gemini
