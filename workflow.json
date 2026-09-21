@@ -1,0 +1,665 @@
+{
+  "name": "AI Inbox Organizer & Priority Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 📬 AI Inbox Organizer & Priority Alert\nClassifies incoming email (urgent / newsletter / job-related / invoice / other) and routes it automatically.\n\n",
+        "height": 168,
+        "width": 544,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        -368
+      ],
+      "id": "38d641fe-3090-4846-8c0f-96e2394bd1c9",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## 2️⃣ BRAIN - \nLocal LLM (+ fallback)\nPrimary: Qwen 2.5 7B via LM Studio on my inference PC (LAN, OpenAI-compatible API).\nFallback: Gemini - catches emails if the local server is down.",
+        "height": 220,
+        "width": 440,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -704,
+        704
+      ],
+      "id": "4ba1c38c-5973-41cc-9a57-622033863236",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## 3️⃣ ACTIONS - by category\nLabels, drafts, calendar reminders, Telegram alerts.\nNothing is ever DELETED -\n an AI can misclassify, so every action is reversible.",
+        "width": 420,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -96,
+        -96
+      ],
+      "id": "c19fbee2-d806-4556-a157-e37e70392954",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "-from:me"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1232,
+        336
+      ],
+      "id": "b1659b12-b7cb-4f74-acb2-e313191cfb59",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "PgXZtdaYZQMyYenb",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizes ANY email shape (demo / old Gmail / new Gmail) into clean fields for the LLM\nconst item = $input.first().json;\n\n// ---------- helpers ----------\nfunction b64urlDecode(data) {\n  try { if (typeof Buffer !== 'undefined') return Buffer.from(data, 'base64url').toString('utf8'); } catch (e) {}\n  try {\n    const b64 = String(data).replace(/-/g, '+').replace(/_/g, '/');\n    return decodeURIComponent(escape(atob(b64)));\n  } catch (e) { return ''; }\n}\n\nfunction cleanText(raw) {\n  return String(raw || '')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim()\n    .slice(0, 3000);\n}\n\n// ---------- 1) DEMO data (Sample Email Set node: flat fields, no headers/payload) ----------\nif (!item.headers && !item.payload) {\n  return [{ json: {\n    messageId: item.messageId || 'demo-001',\n    threadId: item.threadId || 'demo-001',\n    from: item.from || 'unknown@example.com',\n    subject: item.subject || '(no subject)',\n    date: item.date || new Date().toISOString(),\n    body: cleanText(item.body),\n    snippet: item.snippet || ''\n  }}];\n}\n\n// ---------- 2) REAL data ----------\nlet from = '', subject = '', date = '', rawBody = '';\n\nif (item.payload) {\n  // OLD Gmail format: payload.headers = ARRAY of {name, value}\n  const getHeader = (name) => {\n    const h = (item.payload.headers || []).find(x => x.name && x.name.toLowerCase() === name.toLowerCase());\n    return h ? h.value : '';\n  };\n  from = getHeader('From');\n  subject = getHeader('Subject');\n  date = getHeader('Date');\n  if (item.payload.body?.data) rawBody = b64urlDecode(item.payload.body.data);\n  else for (const part of item.payload.parts || []) {\n    if (part.mimeType === 'text/plain' && part.body?.data) { rawBody = b64urlDecode(part.body.data); break; }\n  }\n} else if (item.headers) {\n  // NEW Gmail format (your n8n version): headers = flat OBJECT\n  const get = (name) => {\n    const v = item.headers[name.toLowerCase()] ?? item.headers[name] ?? '';\n    return String(v).replace(new RegExp('^\\\\s*' + name + '\\\\s*:\\\\s*', 'i'), '').trim();\n  };\n  from = get('From');\n  subject = get('Subject');\n  date = get('Date');\n  // body could hide in several places — try them all, snippet as last resort\n  if (typeof item.body === 'string') rawBody = item.body;\n  else if (item.body?.data) rawBody = b64urlDecode(item.body.data);\n  else if (typeof item.text === 'string') rawBody = item.text;\n}\n\nrawBody = rawBody || item.snippet || '';\n\nreturn [{ json: {\n  messageId: item.id || item.messageId,\n  threadId: item.threadId,\n  from: from || 'unknown@example.com',\n  subject: subject || '(no subject)',\n  date,\n  body: cleanText(rawBody),\n  snippet: item.snippet || ''\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1008,
+        336
+      ],
+      "id": "6e520e12-38f7-422f-98cb-14e232902354",
+      "name": "Prepare Email"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an email triage engine for a busy professional. Classify the email into exactly one category.\n\nCategories:\n- urgent: a real person needs a response or action TODAY (deadlines, incidents, account/security, legal, personal asks). Marketing \"act now\" language is NOT urgent.\n- job-related: recruiters, applications, interviews, offers, hiring outreach.\n- invoice: bills, payment requests, receipts, subscription charges.\n- newsletter: marketing, promos, digests, automated notifications. No personal reply expected.\n- other: anything else.\n\nAlso produce:\n- priority: integer 1-5 (5 = act immediately, 1 = ignore)\n- summary: one sentence, max 25 words\n- draft_reply: ONLY if job-related or urgent from a real person; max 2 sentences, professional. Otherwise null.\n\nRespond with ONLY this JSON, no markdown fences, no extra text:\n{\"category\":\"urgent|newsletter|job-related|invoice|other\",\"priority\":0,\"summary\":\"\",\"draft_reply\":null}\n\nFROM: {{ $json.from }}\nSUBJECT: {{ $json.subject }}\nDATE: {{ $json.date }}\nBODY: {{ $json.body }}",
+        "needsFallback": true
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        -800,
+        336
+      ],
+      "id": "71b7fcf8-6872-41ca-9da2-a4b6b94b84a9",
+      "name": "Classify Email"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash",
+        "options": {
+          "maxOutputTokens": 600,
+          "temperature": 0.1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -672,
+        528
+      ],
+      "id": "d42ce238-3032-479b-a407-cb3f89373d7c",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "dEA2XqXAqaIcT3cm",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Defensive parsing: LLM output is never fully trusted\nconst item = $input.first().json;\nconst raw = (item.text ?? item.output ?? '').toString();\n\nlet c;\ntry {\n  const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();\n  const match = cleaned.match(/\\{[\\s\\S]*\\}/); // extract JSON even if model added chatter\n  c = JSON.parse(match ? match[0] : cleaned);\n} catch (e) {\n  c = { category: 'other', priority: 3, summary: (raw.slice(0, 180) || 'AI parse failed'), draft_reply: null };\n}\n\nconst allowed = ['urgent', 'newsletter', 'job-related', 'invoice', 'other'];\nc.category = allowed.includes(c.category) ? c.category : 'other';\nc.priority = Math.min(5, Math.max(1, Number(c.priority) || 3));\nc.summary = c.summary || item.subject || '(no summary)';\nif (!c.draft_reply || typeof c.draft_reply !== 'string') c.draft_reply = null;\nif (c.category === 'job-related' && !c.draft_reply) {\n  c.draft_reply = 'Thank you for reaching out — I received your email and will get back to you shortly.';\n}\n\nreturn [{ json: { ...item, classification: c } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -512,
+        336
+      ],
+      "id": "e27deefc-9b16-4d50-bbc4-e6c5930e60c3",
+      "name": "Parse AI Output"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "leftValue": "={{ $json.classification.category }}",
+                    "rightValue": "urgent",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Urgent"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "r2",
+                    "leftValue": "={{ $json.classification.category }}",
+                    "rightValue": "newsletter",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Newsletter"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "r3",
+                    "leftValue": "={{ $json.classification.category }}",
+                    "rightValue": "job-related",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Job Related"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "r4",
+                    "leftValue": "={{ $json.classification.category }}",
+                    "rightValue": "invoice",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Invoice"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "r5",
+                    "leftValue": "={{ $json.classification.category }}",
+                    "rightValue": "other",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Other"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -336,
+        336
+      ],
+      "id": "506cb9fd-eb70-4c4a-b899-1023cef7bae8",
+      "name": "Route by Category"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Prepare Email').item.json.messageId }}",
+        "labelIds": [
+          "Label_8926890452467142582"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -80,
+        96
+      ],
+      "id": "9873e4ee-b67d-451d-bcf1-74205cb81c1b",
+      "name": "Label Urgent",
+      "webhookId": "474e23fc-769d-43d6-872f-cc6c3972447f",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "PgXZtdaYZQMyYenb",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=🚨 URGENT EMAIL\nFrom: {{ $('Prepare Email').item.json.from }}\nSubject: {{ $('Prepare Email').item.json.subject }}\n\nSummary: {{ $('Parse AI Output').item.json.classification.summary }}\nPriority: {{ $('Parse AI Output').item.json.classification.priority }}/5",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        160,
+        96
+      ],
+      "id": "41a5819b-f22f-496e-9791-aa7e0ed67361",
+      "name": "Telegram Alert",
+      "webhookId": "75787331-3815-4eb0-a219-fb31a7dd4178",
+      "credentials": {
+        "telegramApi": {
+          "id": "wJvyeoDzCjpjmIRr",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "markAsRead",
+        "messageId": "={{ $('Prepare Email').item.json.messageId }}"
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -80,
+        256
+      ],
+      "id": "e8fe3db0-425f-4564-b476-46f6d3d0be40",
+      "name": "Archive Newsletter",
+      "webhookId": "a26d356f-fdec-4090-a200-785948823f80",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "PgXZtdaYZQMyYenb",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Prepare Email').item.json.messageId }}",
+        "labelIds": [
+          "Label_4433732684774547409"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -80,
+        416
+      ],
+      "id": "d96407a7-b391-4639-9d62-7ad6d5631471",
+      "name": "Label Job Email",
+      "webhookId": "1d496900-dd8c-414e-a887-3b8ac4eee00a",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "PgXZtdaYZQMyYenb",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "=Re: {{ $('Prepare Email').item.json.subject }}",
+        "message": "={{ $('Parse AI Output').item.json.classification.draft_reply }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        160,
+        336
+      ],
+      "id": "b8e24f5b-f1c0-421b-b0c6-eee02a4ba698",
+      "name": "Draft Reply",
+      "webhookId": "3109e289-9c37-41b1-9117-1261dc9c2c2e",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "PgXZtdaYZQMyYenb",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Prepare Email').item.json.messageId }}",
+        "labelIds": [
+          "Label_1425259177773376716"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -80,
+        576
+      ],
+      "id": "b78ed82f-bfbc-416d-8476-ae6c55275bfe",
+      "name": "Label Invoice",
+      "webhookId": "29a39479-456b-4125-b966-93b42d476d78",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "PgXZtdaYZQMyYenb",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "67867b9a3dac0b7cbbe0e0db9dcf7e78ed9a055b9d81b4d455dfabd035dd3b8d@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "n8n-pratice"
+        },
+        "start": "={{ new Date(Date.now() + 86400000).toISOString() }}",
+        "end": "={{ new Date(Date.now() + 90000000).toISOString() }}",
+        "additionalFields": {
+          "description": "=From: {{ $('Prepare Email').item.json.from }}\nSummary: {{ $('Parse AI Output').item.json.classification.summary }}",
+          "summary": "=💰 Pay invoice: {{ $('Prepare Email').item.json.subject }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        144,
+        576
+      ],
+      "id": "5331e7e1-b8b7-409e-8c99-abe10d357331",
+      "name": "Calendar Reminder",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "7nRzN76NCAVM0xXs",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        752
+      ],
+      "id": "a1867341-3c08-4ba8-8d4a-f0929a1988a8",
+      "name": "No Action"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "qwen2.5-7b-instruct",
+          "mode": "id"
+        },
+        "responsesApiEnabled": false,
+        "options": {
+          "maxTokens": 600,
+          "temperature": 0.1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -816,
+        544
+      ],
+      "id": "b883cdd6-59bd-4a48-a756-dfdbd003d5a9",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "YSVd4NkfERr0m4Cb",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 1️⃣ INPUT — Gmail Trigger\nPolls Gmail every 60s for new mail.\nSearch filter \"-from:me\" skips emails I sent myself. ",
+        "height": 176,
+        "width": 352
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1232,
+        96
+      ],
+      "typeVersion": 1,
+      "id": "a694aedf-bf30-4693-a462-82e56f563f44",
+      "name": "Sticky Note7"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Email": {
+      "main": [
+        [
+          {
+            "node": "Classify Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classify Email",
+            "type": "ai_languageModel",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Classify Email": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Output": {
+      "main": [
+        [
+          {
+            "node": "Route by Category",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Category": {
+      "main": [
+        [
+          {
+            "node": "Label Urgent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Archive Newsletter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Label Job Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Label Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Urgent": {
+      "main": [
+        [
+          {
+            "node": "Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Job Email": {
+      "main": [
+        [
+          {
+            "node": "Draft Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Invoice": {
+      "main": [
+        [
+          {
+            "node": "Calendar Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Action": {
+      "main": [
+        []
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classify Email",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "05341d89-4365-4e85-91c0-ea9339b517a9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d509a93c1d920dbbcecfc6a349d71a9da38a9b8d8cbe82c410d04fed44dfac26"
+  },
+  "id": "1vjouPpjJ81iubHA",
+  "tags": []
+}
