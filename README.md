@@ -59,15 +59,6 @@ The validation handles:
 - Priority validation and clamping to `1–5`
 - Invalid output fallback to `other`
 
-## Gmail Input Normalization
-
-The workflow normalizes Gmail data before classification.
-
-The normalization supports three Gmail trigger output formats:
-
-- Legacy `payload` format
-- Pre-parsed headers
-- Demo/sample data
 
 ## Action Safety
 
@@ -79,11 +70,13 @@ The workflow never deletes emails.
 
 For job-related emails, the AI only creates a Gmail draft. The message is never sent automatically.
 
-## Demo Mode
+## Telegram Alert
 
-The workflow includes a disabled-by-default demo path using a Manual Trigger and Sample Email node.
+If an email is classified as **urgent**, the workflow sends a Telegram alert with an AI-generated summary and priority.
 
-This allows the complete pipeline to be tested without using a real inbox.
+<p align="center">
+  <img src="telegram.jpg" width="400">
+</p>
 
 ## Setup
 
@@ -97,7 +90,6 @@ This allows the complete pipeline to be tested without using a real inbox.
 5. Configure LM Studio and serve Qwen 2.5 7B over the local network.
 6. Configure Gemini as the fallback model.
 7. Configure the Telegram bot and chat ID.
-8. Optionally enable the demo nodes for testing.
 
 </details>
 
